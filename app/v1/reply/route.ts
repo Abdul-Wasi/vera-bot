@@ -39,37 +39,38 @@ export async function POST(request: Request) {
     }
 
     const history = contextData.history || [];
-    
+
     // Format history for Gemini SDK
     const formattedHistory = history.map((msg: any) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.content }]
     }));
 
-    const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: {
-            temperature: 0,
-            responseMimeType: "application/json",
-        }
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+      }
     });
 
     const chat = model.startChat({
-        history: [
-            {
-                role: 'user',
-                parts: [{ text: `${SYSTEM_PROMPT}\n\nMerchant Context:\n${JSON.stringify(contextData.payload || contextData)}` }]
-            },
-            {
-                role: 'model',
-                parts: [{ text: 'Acknowledged. I will strictly follow these instructions and use the provided context.' }]
-            },
-            ...formattedHistory
-        ]
+      history: [
+        {
+          role: 'user',
+          parts: [{ text: `${SYSTEM_PROMPT}\n\nMerchant Context:\n${JSON.stringify(contextData.payload || contextData)}` }]
+        },
+        {
+          role: 'model',
+          parts: [{ text: 'Acknowledged. I will strictly follow these instructions and use the provided context.' }]
+        },
+        ...formattedHistory
+      ]
     });
 
     const result = await chat.sendMessage(reply_text);
-    const responseText = result.response.text();
+    let responseText = result.response.text();
+    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsedResult = JSON.parse(responseText);
 
     history.push({ role: 'user', content: reply_text });

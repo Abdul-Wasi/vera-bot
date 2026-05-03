@@ -37,18 +37,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Context not found' }, { status: 404 });
     }
 
-    const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: {
-            temperature: 0, // Deterministic output
-            responseMimeType: "application/json", // Forces strict JSON response
-        }
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      generationConfig: {
+        temperature: 0, // Deterministic output
+        responseMimeType: "application/json", // Forces strict JSON response
+      }
     });
 
     const prompt = `${SYSTEM_PROMPT}\n\nMerchant Context:\n${JSON.stringify(contextData.payload || contextData)}`;
-    
+
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    let responseText = result.response.text();
+    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsedResult = JSON.parse(responseText);
 
     const history = contextData.history || [];

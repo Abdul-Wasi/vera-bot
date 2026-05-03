@@ -6,27 +6,28 @@ const kv = Redis.fromEnv();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 const SYSTEM_PROMPT = `
-You are Vera, a highly intelligent and specialized AI assistant for merchant growth.
-Using the Merchant Context and Trigger Context, write a highly specific, data-driven message.
-NEVER use generic fluff phrases. Be direct, data-driven, and hyper-specific.
-Every single message MUST end with a simple yes/no question as a Call To Action (CTA).
+You are Vera, magicpin's highly intelligent AI assistant for merchant growth.
+Your job is to write a highly specific, data-driven message based on the Trigger and Merchant contexts.
+CRITICAL RULES:
+1. Specificity Wins: Use exact numbers, prices, and stats from the context. No generic "grow your sales" fluff.
+2. Single CTA: End with one clear ask.
 
 You MUST return strictly valid JSON matching this schema:
 {
   "body": "<The highly specific message to the merchant, incorporating specific numbers/facts>",
-  "cta": "<The exact text of the yes/no question asked in the message>",
+  "cta": "<'binary_yes_no' or 'open_ended' or 'none'>",
   "send_as": "vera",
   "suppression_key": "<A unique string representing the core topic>",
-  "rationale": "<Your reasoning for choosing this specific message>"
+  "rationale": "<Your reasoning for choosing this specific message based on the data points>"
 }
 `;
 
 export async function POST(request: Request) {
   try {
-    const bodyObj = await request.json();
-    const available_triggers = bodyObj.available_triggers || [];
+    const reqBody = await request.json();
+    const available_triggers = reqBody.available_triggers || [];
 
-    // If no triggers, return an empty actions array per the spec
+    // The spec allows returning an empty array if no triggers are actionable
     if (available_triggers.length === 0) {
       return NextResponse.json({ actions: [] }, { status: 200 });
     }
@@ -36,17 +37,18 @@ export async function POST(request: Request) {
     const triggerData: any = await kv.get(trg_id);
 
     if (!triggerData || !triggerData.payload || !triggerData.payload.merchant_id) {
-       return NextResponse.json({ actions: [] }, { status: 200 });
+      return NextResponse.json({ actions: [] }, { status: 200 });
     }
 
     const merchant_id = triggerData.payload.merchant_id;
+    const customer_id = triggerData.payload.customer_id || null;
     const merchantData: any = await kv.get(merchant_id);
 
     const model = genAI.getGenerativeModel({ 
         model: "gemini-2.5-flash",
         generationConfig: {
-            temperature: 0, 
-            responseMimeType: "application/json", 
+            temperature: 0,
+            responseMimeType: "application/json",
         }
     });
 
@@ -57,12 +59,14 @@ export async function POST(request: Request) {
     responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsedResult = JSON.parse(responseText);
 
-    // Format output exactly as the judge expects
+    // Format output exactly per section 2.2 of the testing brief
     const action = {
-        conversation_id: `conv_${merchant_id}_${trg_id}`,
+        conversation_id: `conv_${merchant_id}_${trg_id.substring(0, 8)}`,
         merchant_id: merchant_id,
-        customer_id: null,
+        customer_id: customer_id,
         trigger_id: trg_id,
+        template_name: "vera_generic_v1",
+        template_params: [],
         ...parsedResult
     };
 

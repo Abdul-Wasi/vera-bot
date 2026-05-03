@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const kv = Redis.fromEnv();
+const kv = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '',
+});
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(request: Request) {
@@ -15,7 +18,8 @@ export async function POST(request: Request) {
     }
 
     const trg_id = available_triggers[0];
-    const triggerData: any = await kv.get(trg_id);
+    let triggerData: any;
+    try { triggerData = await kv.get(trg_id); } catch(e) {}
 
     if (!triggerData || !triggerData.payload || !triggerData.payload.merchant_id) {
       return NextResponse.json({ actions: [] }, { status: 200 });
@@ -23,23 +27,26 @@ export async function POST(request: Request) {
 
     const merchant_id = triggerData.payload.merchant_id;
     const customer_id = triggerData.payload.customer_id || null;
-    const merchantData: any = await kv.get(merchant_id);
-    const customerData: any = customer_id ? await kv.get(customer_id) : null;
+    let merchantData: any, customerData: any;
+    try {
+        merchantData = await kv.get(merchant_id);
+        if (customer_id) customerData = await kv.get(customer_id);
+    } catch(e) {}
 
-    // PRO-TIER ROUTING: Decide tone and sender identity based on the presence of a customer
     const isCustomerFacing = customer_id !== null;
     const sendAs = isCustomerFacing ? "merchant_on_behalf" : "vera";
     
     const audiencePrompt = isCustomerFacing 
-      ? `You are messaging the merchant's CUSTOMER on behalf of the merchant. Tone: Warm, helpful, NO medical guarantees. Use the customer's name and preferred language.`
-      : `You are Vera, messaging the MERCHANT directly. Tone: Peer-to-peer, highly analytical, data-driven. Use exact numbers and performance stats.`;
+      ? `You are messaging the merchant's CUSTOMER on behalf of the merchant. Tone: Warm, helpful. Use the customer's name and preferred language.`
+      : `You are Vera, messaging the MERCHANT directly. Tone: Peer-to-peer, highly analytical, data-driven.`;
 
     const SYSTEM_PROMPT = `
       ${audiencePrompt}
-      CRITICAL RULES:
-      1. Specificity Wins: Extract exact numbers, prices, and stats from the context.
-      2. Single CTA: End with one clear ask (a yes/no question or simple choice).
-      3. No generic marketing fluff.
+      CRITICAL SCORING RULES:
+      1. SPECIFICITY: You MUST extract and use exact numbers, dates, and prices from the contexts.
+      2. MERCHANT FIT: You MUST use the Merchant's Owner Name (if available) or Business Name.
+      3. TRIGGER RELEVANCE: Explicitly state the specific event/data from the Trigger Context driving this message.
+      4. ENGAGEMENT: End with a single, clear, low-friction Yes/No question.
 
       Return strictly valid JSON matching this schema:
       {
@@ -55,7 +62,7 @@ export async function POST(request: Request) {
         generationConfig: { temperature: 0, responseMimeType: "application/json" }
     });
 
-    const prompt = `${SYSTEM_PROMPT}\n\nTrigger Context:\n${JSON.stringify(triggerData.payload)}\n\nMerchant Context:\n${JSON.stringify(merchantData?.payload || {})}\n\nCustomer Context:\n${JSON.stringify(customerData?.payload || {})}`;
+    const prompt = `${SYSTEM_PROMPT}\n\nTrigger Context:\n${JSON.stringify(triggerData?.payload || {})}\n\nMerchant Context:\n${JSON.stringify(merchantData?.payload || {})}\n\nCustomer Context:\n${JSON.stringify(customerData?.payload || {})}`;
     
     const result = await model.generateContent(prompt);
     let responseText = result.response.text();

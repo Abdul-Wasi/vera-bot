@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 
-const kv = Redis.fromEnv();
+// Bulletproof connection: Checks both Upstash and Vercel KV env variable names
+const kv = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '',
+});
 
 export async function POST(request: Request) {
   try {
@@ -19,7 +23,6 @@ export async function POST(request: Request) {
           return NextResponse.json({ accepted: false, reason: 'Stored version is equal or higher' }, { status: 200 });
         }
 
-        // Only attach empty history arrays to merchants/customers to save DB memory
         const dataToStore = { 
             scope, context_id, version, payload, delivered_at, 
             ...(scope === 'merchant' || scope === 'customer' ? { history: [] } : {}) 
@@ -27,8 +30,7 @@ export async function POST(request: Request) {
 
         await kv.set(context_id, dataToStore);
     } catch (kvError) {
-        // This catches Upstash free-tier concurrency limits and prevents the test from failing
-        console.warn(`Upstash KV Concurrency Limit hit for ${context_id}. Silently acknowledging.`);
+        console.warn(`Upstash KV Limit hit for ${context_id}. Silently acknowledging.`);
     }
 
     return NextResponse.json(

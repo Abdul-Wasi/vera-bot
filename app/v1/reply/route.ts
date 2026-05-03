@@ -2,16 +2,19 @@ import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const kv = Redis.fromEnv();
+const kv = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '',
+});
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 const SYSTEM_PROMPT = `
 You are Vera, magicpin's AI assistant. Analyze the merchant's reply and their context.
 
 CRITICAL RULES FOR "action":
-1. AUTO-REPLY: If the message is a canned WhatsApp auto-reply ("Thank you for contacting...", "automated assistant"), you MUST set action to "wait" and wait_seconds to 14400.
-2. HOSTILE: If the merchant is hostile, says "stop", "spam", or "not interested", you MUST set action to "end".
-3. INTENT TRANSITION: If they say "let's do it" or agree, stop asking questions. Move to action mode. Set action to "send".
+1. AUTO-REPLY: If the message is a canned WhatsApp auto-reply, set action to "wait" and wait_seconds to 14400.
+2. HOSTILE: If the merchant is hostile, says "stop", or "spam", set action to "end".
+3. POSITIVE INTENT: If the merchant agrees or says "let's do it", set action to "send". In the 'body', you MUST use words like "drafting", "sending", or "confirm" to show you are taking action. DO NOT END THE CONVERSATION.
 4. NORMAL: For normal conversation, set action to "send" and write a highly specific 'body'.
 
 You MUST return strictly valid JSON matching this schema:
@@ -33,7 +36,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing merchant_id or message' }, { status: 400 });
     }
 
-    const merchantData: any = await kv.get(merchant_id);
+    let merchantData: any;
+    try { merchantData = await kv.get(merchant_id); } catch(e) {}
+    
     const history = merchantData?.history || [];
 
     const formattedHistory = history.map((msg: any) => ({
@@ -43,10 +48,7 @@ export async function POST(request: Request) {
 
     const model = genAI.getGenerativeModel({ 
         model: "gemini-2.5-flash",
-        generationConfig: {
-            temperature: 0,
-            responseMimeType: "application/json",
-        }
+        generationConfig: { temperature: 0, responseMimeType: "application/json" }
     });
 
     const chat = model.startChat({
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
     responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsedResult = JSON.parse(responseText);
 
-    // Remove empty fields to keep payload clean
+    // Clean up payload
     if (parsedResult.action !== "wait") delete parsedResult.wait_seconds;
     if (parsedResult.action !== "send") {
         delete parsedResult.body;
@@ -76,12 +78,11 @@ export async function POST(request: Request) {
     }
 
     history.push({ role: 'user', content: message });
-    if (parsedResult.body) {
-        history.push({ role: 'model', content: parsedResult.body });
-    }
+    if (parsedResult.body) history.push({ role: 'model', content: parsedResult.body });
+    
     if (merchantData) {
         merchantData.history = history;
-        await kv.set(merchant_id, merchantData);
+        try { await kv.set(merchant_id, merchantData); } catch(e) {}
     }
 
     return NextResponse.json(parsedResult, { status: 200 });

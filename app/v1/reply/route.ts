@@ -56,7 +56,7 @@ export async function POST(request: Request) {
         history: [
             {
                 role: 'user',
-                parts: [{ text: \`\${SYSTEM_PROMPT}\\n\\nMerchant Context:\\n\${JSON.stringify(contextData.payload || contextData)}\` }]
+                parts: [{ text: `${SYSTEM_PROMPT}\n\nMerchant Context:\n${JSON.stringify(contextData.payload || contextData)}` }]
             },
             {
                 role: 'model',

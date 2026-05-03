@@ -43,7 +43,7 @@ export async function POST(request: Request) {
         }
     });
 
-    const prompt = \`\${SYSTEM_PROMPT}\\n\\nMerchant Context:\\n\${JSON.stringify(contextData.payload || contextData)}\`;
+    const prompt = `${SYSTEM_PROMPT}\n\nMerchant Context:\n${JSON.stringify(contextData.payload || contextData)}`;
     
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
